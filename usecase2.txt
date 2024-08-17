@@ -1,0 +1,86 @@
+/* Generating csv file containing first_name, last_name, address, date_of_birth */
+/* Creating database and schema */
+CREATE
+OR REPLACE DATABASE Sampledb;
+CREATE
+OR REPLACE SCHEMA sampleschema;
+
+
+/* Creating a table */
+CREATE
+OR REPLACE TABLE Customer (
+    first_name STRING,
+    last_name STRING,
+    address STRING,
+    date_of_birth DATE
+);
+
+
+/* Inserting random values into the table */
+INSERT INTO
+    Customer (first_name, last_name, address, date_of_birth)
+SELECT
+    randstr(7, random()),
+    randstr(6, random()),
+    CONCAT(
+        ABS(RANDOM()) % 10000,
+        ' ',
+        randstr(5, random()),
+        ' St, ',
+        randstr(5, random())
+    ),
+    DATEADD(DAY, UNIFORM(1, 365, RANDOM()), CURRENT_DATE)
+FROM
+    TABLE(GENERATOR(ROWCOUNT => 105000000));
+    
+    
+    /* The following commands are to be executed in Snowsql */
+    /* Copying data from table to stage */
+    COPY INTO @%Customer/exported_file.csv
+FROM
+    (
+        SELECT
+            first_name,
+            last_name,
+            address,
+            date_of_birth
+        FROM
+            CUSTOMER
+    ) FILE_FORMAT = (
+        TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' NULL_IF = ('NULL', 'null')
+    ) HEADER = TRUE OVERWRITE = TRUE;
+LIST @%customer;
+    /* Getting file from stage to local*/
+    GET @%customer/exported_file.csv_0_0_0.csv.gz file ://D: \ Snowflake /;
+   
+   
+   /* Processing the csv file to anonymize the data*/
+    /* Creating fileformat and stage */
+    CREATE
+    OR REPLACE FILE FORMAT my_csv TYPE = CSV FIELD_DELIMITER = ',' SKIP_HEADER = 1 SKIP_BLANK_LINES = TRUE FIELD_OPTIONALLY_ENCLOSED_BY = '"' ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE;
+CREATE
+    OR REPLACE STAGE my_stage FILE_FORMAT = my_csv;
+LIST @my_stage;
+SHOW STAGES;
+   
+   
+   /* Loading file from Local to stage*/
+    PUT file ://D: \ Snowflake \ newfile \ exported_file.csv_0_0_0.csv @my_stage;
+   
+   
+   /* Copying file from stage to table */
+    Copy into Customer_data
+from
+    @my_stage pattern = '.csv' file format = my_csv purge = true force = false;
+    
+    
+    /*Creating a view to anonymize the columns */
+    CREATE
+    OR REPLACE view anonymized_customers AS
+SELECT
+    MD5(first_name) AS first_name,
+    MD5(last_name) AS last_name,
+    MD5(address) AS address,
+    date_of_birth
+FROM
+    customer_data;
